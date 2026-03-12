@@ -535,17 +535,15 @@ export class MemoryRetriever {
       // BM25 hit acts as a bonus (keyword match confirms relevance).
       const vectorScore = vectorResult ? vectorResult.score : 0;
       const bm25Score = bm25Result ? bm25Result.score : 0;
-      const bm25Hit = bm25Result ? 1 : 0;
-
-      // Base = vector score; BM25 hit boosts by up to 15%
-      // BM25-only results use their raw BM25 score so exact keyword matches
-      // (e.g. searching "JINA_API_KEY") still surface. The previous floor of 0.5
-      // was too generous and allowed ghost entries to survive hardMinScore (0.35).
+      // Weighted fusion: vectorWeight/bm25Weight directly control score blending.
+      // BM25 high-score floor (>= 0.75) preserves exact keyword matches
+      // (e.g. API keys, ticket numbers) that may have low vector similarity.
+      const weightedFusion = (vectorScore * this.config.vectorWeight)
+                           + (bm25Score * this.config.bm25Weight);
       const fusedScore = vectorResult
         ? clamp01(
           Math.max(
-            vectorScore + (bm25Hit * 0.15 * vectorScore),
-            (vectorScore * this.config.vectorWeight) + (bm25Score * this.config.bm25Weight),
+            weightedFusion,
             bm25Score >= 0.75 ? bm25Score * 0.92 : 0,
           ),
           0.1,
