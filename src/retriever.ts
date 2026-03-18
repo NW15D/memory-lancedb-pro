@@ -421,7 +421,7 @@ export class MemoryRetriever {
     if (!this.config.tagPrefixes?.length) return [];
     
     const pattern = this.config.tagPrefixes.join("|");
-    const regex = new RegExp(`(${pattern}):[\\w-]+`, "i");
+    const regex = new RegExp(`(?:${pattern}):[\\w-]+`, "gi");
     const matches = query.match(regex);
     return matches || [];
   }

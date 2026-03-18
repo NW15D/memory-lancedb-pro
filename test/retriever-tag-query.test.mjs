@@ -201,5 +201,90 @@ describe("MemoryRetriever - Tag Query", () => {
       assert.equal(results2.length, 1);
       assert.equal(results2[0].entry.id, "2");
     });
+
+    it("should extract multiple tags from query", async () => {
+      const entries = [
+        {
+          id: "1",
+          text: "proj:AIF env:prod deployment notes",
+          scope: "global",
+          category: "fact",
+          timestamp: Date.now(),
+          vector: new Array(384).fill(0.1),
+        },
+        {
+          id: "2",
+          text: "proj:AIF env:dev testing",
+          scope: "global",
+          category: "fact",
+          timestamp: Date.now(),
+          vector: new Array(384).fill(0.1),
+        },
+        {
+          id: "3",
+          text: "proj:AIF only",
+          scope: "global",
+          category: "fact",
+          timestamp: Date.now(),
+          vector: new Array(384).fill(0.1),
+        },
+      ];
+
+      const store = createMockStore(entries);
+      const embedder = createMockEmbedder();
+      const retriever = new MemoryRetriever(store, embedder, {
+        ...DEFAULT_RETRIEVAL_CONFIG,
+        tagPrefixes: ["proj", "env"],
+      });
+
+      const results = await retriever.retrieve({
+        query: "proj:AIF env:prod",
+        limit: 5,
+      });
+
+      // Should only return entry that contains BOTH tags
+      assert.equal(results.length, 1);
+      assert.equal(results[0].entry.id, "1");
+      assert.ok(results[0].entry.text.includes("proj:AIF"));
+      assert.ok(results[0].entry.text.includes("env:prod"));
+    });
+
+    it("should filter BM25 false positives with mustContain", async () => {
+      const entries = [
+        {
+          id: "1",
+          text: "proj:AIF exact tag match",
+          scope: "global",
+          category: "fact",
+          timestamp: Date.now(),
+          vector: new Array(384).fill(0.1),
+        },
+        {
+          id: "2",
+          text: "This proj is about AIF but not tagged",
+          scope: "global",
+          category: "fact",
+          timestamp: Date.now(),
+          vector: new Array(384).fill(0.1),
+        },
+      ];
+
+      const store = createMockStore(entries);
+      const embedder = createMockEmbedder();
+      const retriever = new MemoryRetriever(store, embedder, {
+        ...DEFAULT_RETRIEVAL_CONFIG,
+        tagPrefixes: ["proj"],
+      });
+
+      const results = await retriever.retrieve({
+        query: "proj:AIF",
+        limit: 5,
+      });
+
+      // Should only return entry with exact tag, not the one with separate words
+      assert.equal(results.length, 1);
+      assert.equal(results[0].entry.id, "1");
+      assert.ok(!results.some((r) => r.entry.id === "2"));
+    });
   });
 });
