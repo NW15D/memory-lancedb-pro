@@ -4,7 +4,9 @@
   "description": "Enhanced LanceDB-backed long-term memory with hybrid retrieval, multi-scope isolation, long-context chunking, and management CLI",
   "version": "1.1.0-beta.10",
   "kind": "memory",
-  "skills": ["./skills"],
+  "skills": [
+    "./skills"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -45,11 +47,17 @@
           },
           "dimensions": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "description": "Internal vector dimensions for LanceDB schema sizing and local embedding validation"
+          },
+          "requestDimensions": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional dimensions/output_dimension value to send to embedding providers that support variable output sizes"
           },
           "omitDimensions": {
             "type": "boolean",
-            "description": "When true, omit the dimensions parameter from embedding requests even if dimensions is configured"
+            "description": "When true, omit dimensions/output_dimension from embedding requests even if requestDimensions is configured"
           },
           "taskQuery": {
             "type": "string",
@@ -161,9 +169,26 @@
       },
       "recallMode": {
         "type": "string",
-        "enum": ["full", "summary", "adaptive", "off"],
+        "enum": [
+          "full",
+          "summary",
+          "adaptive",
+          "off"
+        ],
         "default": "full",
         "description": "Auto-recall depth mode. 'full': inject with configured per-item budget. 'summary': L0 abstracts only (compact). 'adaptive': analyze query intent to auto-select category and depth. 'off': disable auto-recall injection."
+      },
+      "autoRecallExcludeAgents": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Blacklist mode for auto-recall injection. Agents in this list are skipped. Agent resolution falls back to 'main' when no explicit agentId is available. If autoRecallIncludeAgents is also set, include wins."
+      },
+      "autoRecallIncludeAgents": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Whitelist mode for auto-recall injection. Only agents in this list receive auto-recall. Agent resolution falls back to 'main' when no explicit agentId is available. If both include and exclude are set, autoRecallIncludeAgents takes precedence (whitelist wins)."
       },
       "captureAssistant": {
         "type": "boolean"
@@ -260,23 +285,78 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "utility": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.1 },
-              "confidence": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.1 },
-              "novelty": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.1 },
-              "recency": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.1 },
-              "typePrior": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.6 }
+              "utility": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.1
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.1
+              },
+              "novelty": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.1
+              },
+              "recency": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.1
+              },
+              "typePrior": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.6
+              }
             }
           },
           "typePriors": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "profile": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.95 },
-              "preferences": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.9 },
-              "entities": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.75 },
-              "events": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.45 },
-              "cases": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.8 },
-              "patterns": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.85 }
+              "profile": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.95
+              },
+              "preferences": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.9
+              },
+              "entities": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.75
+              },
+              "events": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.45
+              },
+              "cases": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.8
+              },
+              "patterns": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.85
+              }
             }
           }
         }
@@ -651,6 +731,18 @@
           "dedupeErrorSignals": {
             "type": "boolean",
             "default": true
+          },
+          "serialCooldownMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Cooldown in ms between reflection triggers for the same session. Default: 120000 (2 min). Set to 0 to disable."
+          },
+          "excludeAgents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Agent/session patterns excluded from reflection injection. Supports exact match, wildcard prefix (e.g. pi-), and temp:*."
           }
         }
       },
@@ -854,8 +946,18 @@
             "description": "Maximum number of auto-capture extractions allowed per hour"
           }
         }
+      },
+      "autoRecallExcludeAgents": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Agent/session patterns excluded from auto-recall and reflection injection. Supports exact match, wildcard prefix (e.g. pi-), and temp:*."
       }
-    }
+    },
+    "required": [
+      "embedding"
+    ]
   },
   "uiHints": {
     "embedding.apiKey": {
@@ -876,14 +978,20 @@
       "advanced": true
     },
     "embedding.dimensions": {
-      "label": "Vector Dimensions",
+      "label": "Schema Dimensions",
       "placeholder": "auto-detected from model",
-      "help": "Override vector dimensions for custom models not in the built-in lookup table",
+      "help": "Internal vector dimensions used for LanceDB schema sizing and local embedding validation. Override this for custom models not in the built-in lookup table.",
+      "advanced": true
+    },
+    "embedding.requestDimensions": {
+      "label": "Request Dimensions",
+      "placeholder": "omit by default",
+      "help": "Optional dimensions/output_dimension value to send to the embedding API. If unset, no request-side dimensions field is sent.",
       "advanced": true
     },
     "embedding.omitDimensions": {
       "label": "Omit Request Dimensions",
-      "help": "Do not send the dimensions parameter to the embedding API even if embedding.dimensions is configured. Useful for local models like Qwen3-Embedding that reject the field.",
+      "help": "Do not send dimensions/output_dimension to the embedding API even if embedding.requestDimensions is configured. Useful for local models like Qwen3-Embedding that reject the field.",
       "advanced": true
     },
     "embedding.taskQuery": {
@@ -1376,6 +1484,16 @@
     "extractionThrottle.maxExtractionsPerHour": {
       "label": "Max Extractions Per Hour",
       "help": "Rate limit for auto-capture extractions. Prevents excessive LLM calls during rapid-fire sessions.",
+      "advanced": true
+    },
+    "autoRecallExcludeAgents": {
+      "label": "Auto-Recall Excluded Agents",
+      "help": "Blacklist mode. Agents here are skipped for auto-recall. If agentId is unavailable it falls back to 'main'. If autoRecallIncludeAgents is set, include wins.",
+      "advanced": true
+    },
+    "autoRecallIncludeAgents": {
+      "label": "Auto-Recall Included Agents",
+      "help": "Whitelist mode. Only these agents receive auto-recall. If agentId is unavailable it falls back to 'main'. Includes take precedence over excludes.",
       "advanced": true
     }
   }

@@ -17,6 +17,7 @@ const jiti = jitiFactory(import.meta.url, {
 
 const pluginModule = jiti("../index.ts");
 const memoryLanceDBProPlugin = pluginModule.default || pluginModule;
+const resetRegistration = pluginModule.resetRegistration ?? (() => {});
 const { MemoryStore } = jiti("../src/store.ts");
 const { storeReflectionToLanceDB } = jiti("../src/reflection-store.ts");
 
@@ -117,11 +118,15 @@ async function invokeReflectionHooks({ workDir, agentId, explicitAgentId = agent
   memoryLanceDBProPlugin.register(harness.api);
 
   const promptHooks = harness.eventHandlers.get("before_prompt_build") || [];
+  const reflectionHooks = promptHooks.filter((hook) => {
+    const priority = hook.meta?.priority;
+    return priority === 12 || priority === 15;
+  });
 
-  assert.equal(promptHooks.length, 2, "expected exactly two before_prompt_build hooks (invariants + derived)");
+  assert.equal(reflectionHooks.length, 2, "expected reflection before_prompt_build hooks (priorities 12 and 15)");
 
   // Sort by priority: lower priority value runs first (invariants=12, derived=15)
-  const sorted = [...promptHooks].sort((a, b) => (a.meta?.priority ?? 99) - (b.meta?.priority ?? 99));
+  const sorted = [...reflectionHooks].sort((a, b) => (a.meta?.priority ?? 99) - (b.meta?.priority ?? 99));
   const ctx = { sessionKey: `agent:${agentId}:test`, agentId: explicitAgentId };
   const startResult = await sorted[0].handler({}, ctx);   // invariants (priority 12)
   const promptResult = await sorted[1].handler({}, ctx);   // derived (priority 15)
@@ -134,9 +139,11 @@ describe("reflection hooks tolerate bypass scope filters", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(path.join(tmpdir(), "reflection-bypass-hook-"));
+    resetRegistration();
   });
 
   afterEach(() => {
+    resetRegistration();
     rmSync(workDir, { recursive: true, force: true });
   });
 

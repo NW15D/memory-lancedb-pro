@@ -252,8 +252,74 @@ export function loadAgentReflectionSlicesFromEntries(params: LoadReflectionSlice
   const itemRows = reflectionRows.filter(({ metadata }) => metadata.type === "memory-reflection-item");
   const legacyRows = reflectionRows.filter(({ metadata }) => metadata.type === "memory-reflection");
 
-  const invariantCandidates = buildInvariantCandidates(itemRows, legacyRows);
-  const derivedCandidates = buildDerivedCandidates(itemRows, legacyRows);
+  // [P1] Filter out resolved items — passive suppression for #447
+  // resolvedAt === undefined means unresolved (default)
+  const unresolvedItemRows = itemRows.filter(({ metadata }) => metadata.resolvedAt === undefined);
+  const resolvedItemRows = itemRows.filter(({ metadata }) => metadata.resolvedAt !== undefined);
+
+  const hasItemRows = itemRows.length > 0;
+  const hasLegacyRows = legacyRows.length > 0;
+
+  // Collect normalized text of resolved items so we can detect whether legacy
+  // rows are pure duplicates of already-resolved content.
+  const resolvedInvariantTexts = new Set(
+    resolvedItemRows
+      .filter(({ metadata }) => metadata.itemKind === "invariant")
+      .flatMap(({ entry }) => sanitizeInjectableReflectionLines([entry.text]))
+      .map((line) => normalizeReflectionLineForAggregation(line))
+  );
+  const resolvedDerivedTexts = new Set(
+    resolvedItemRows
+      .filter(({ metadata }) => metadata.itemKind === "derived")
+      .flatMap(({ entry }) => sanitizeInjectableReflectionLines([entry.text]))
+      .map((line) => normalizeReflectionLineForAggregation(line))
+  );
+
+  // Check whether legacy rows add any content not already covered by resolved items.
+  // F4 fix: apply same normalization pipeline to both sides
+  const legacyHasUniqueInvariant = legacyRows.some(({ metadata }) =>
+    sanitizeInjectableReflectionLines(toStringArray(metadata.invariants)).some(
+      (line) => !resolvedInvariantTexts.has(normalizeReflectionLineForAggregation(line))
+    )
+  );
+  const legacyHasUniqueDerived = legacyRows.some(({ metadata }) =>
+    sanitizeInjectableReflectionLines(toStringArray(metadata.derived)).some(
+      (line) => !resolvedDerivedTexts.has(normalizeReflectionLineForAggregation(line))
+    )
+  );
+
+  // Suppress when:
+  // 1) there were item rows, all are resolved, and there are no legacy rows, OR
+  // 2) there were item rows, all are resolved, legacy rows exist BUT all of their
+  //    content duplicates already-resolved items (prevents legacy fallback from
+  //    reviving just-resolved advice — the P1 bug fixed here).
+  const shouldSuppress =
+    hasItemRows &&
+    unresolvedItemRows.length === 0 &&
+    (!hasLegacyRows || (!legacyHasUniqueInvariant && !legacyHasUniqueDerived));
+  if (shouldSuppress) {
+    return { invariants: [], derived: [] };
+  }
+
+  // [P2] Per-section legacy filtering: only pass legacy rows that have unique
+  // content for this specific section. Prevents resolved items in section A from being
+  // revived when section B has unique legacy content (cross-section legacy fallback bug).
+  // MR1 fix: exclude rows where ALL lines are resolved, not just some.
+  const invariantLegacyRows = legacyRows.filter(({ metadata }) => {
+    const lines = sanitizeInjectableReflectionLines(toStringArray(metadata.invariants));
+    if (lines.length === 0) return false;
+    // Keep row only if at least one line is NOT resolved
+    return lines.some((line) => !resolvedInvariantTexts.has(normalizeReflectionLineForAggregation(line)));
+  });
+  const derivedLegacyRows = legacyRows.filter(({ metadata }) => {
+    const lines = sanitizeInjectableReflectionLines(toStringArray(metadata.derived));
+    if (lines.length === 0) return false;
+    // Keep row only if at least one line is NOT resolved
+    return lines.some((line) => !resolvedDerivedTexts.has(normalizeReflectionLineForAggregation(line)));
+  });
+
+  const invariantCandidates = buildInvariantCandidates(unresolvedItemRows, invariantLegacyRows, resolvedInvariantTexts);
+  const derivedCandidates = buildDerivedCandidates(unresolvedItemRows, derivedLegacyRows, params.agentId, resolvedDerivedTexts);
 
   const invariants = rankReflectionLines(invariantCandidates, {
     now,
@@ -269,7 +335,6 @@ export function loadAgentReflectionSlicesFromEntries(params: LoadReflectionSlice
 
   return { invariants, derived };
 }
-
 type WeightedLineCandidate = {
   line: string;
   timestamp: number;
@@ -282,7 +347,8 @@ type WeightedLineCandidate = {
 
 function buildInvariantCandidates(
   itemRows: Array<{ entry: MemoryEntry; metadata: Record<string, unknown> }>,
-  legacyRows: Array<{ entry: MemoryEntry; metadata: Record<string, unknown> }>
+  legacyRows: Array<{ entry: MemoryEntry; metadata: Record<string, unknown> }>,
+  resolvedTexts: Set<string>
 ): WeightedLineCandidate[] {
   const itemCandidates = itemRows
     .filter(({ metadata }) => metadata.itemKind === "invariant")
@@ -306,25 +372,38 @@ function buildInvariantCandidates(
 
   if (itemCandidates.length > 0) return itemCandidates;
 
-  return legacyRows.flatMap(({ entry, metadata }) => {
-    const defaults = getReflectionItemDecayDefaults("invariant");
-    const timestamp = metadataTimestamp(metadata, entry.timestamp);
-    const lines = sanitizeInjectableReflectionLines(toStringArray(metadata.invariants));
-    return lines.map((line) => ({
-      line,
-      timestamp,
-      midpointDays: defaults.midpointDays,
-      k: defaults.k,
-      baseWeight: defaults.baseWeight,
-      quality: defaults.quality,
-      usedFallback: metadata.usedFallback === true,
-    }));
-  });
+  // Legacy fallback: filter out resolved lines (P2 fix).
+  // resolvedTexts must be the already-normalized Set so line.normalized === setMember
+  // to pass the resolved filter check.
+  return legacyRows
+    .filter(({ metadata }) => {
+      const lines = sanitizeInjectableReflectionLines(toStringArray(metadata.invariants));
+      if (lines.length === 0) return false;
+      return lines.some((line) => !resolvedTexts.has(normalizeReflectionLineForAggregation(line)));
+    })
+    .flatMap(({ entry, metadata }) => {
+      const defaults = getReflectionItemDecayDefaults("invariant");
+      const timestamp = metadataTimestamp(metadata, entry.timestamp);
+      const lines = sanitizeInjectableReflectionLines(toStringArray(metadata.invariants));
+      return lines
+        .filter((line) => !resolvedTexts.has(normalizeReflectionLineForAggregation(line)))
+        .map((line) => ({
+          line,
+          timestamp,
+          midpointDays: defaults.midpointDays,
+          k: defaults.k,
+          baseWeight: defaults.baseWeight,
+          quality: defaults.quality,
+          usedFallback: metadata.usedFallback === true,
+        }));
+    });
 }
 
 function buildDerivedCandidates(
   itemRows: Array<{ entry: MemoryEntry; metadata: Record<string, unknown> }>,
-  legacyRows: Array<{ entry: MemoryEntry; metadata: Record<string, unknown> }>
+  legacyRows: Array<{ entry: MemoryEntry; metadata: Record<string, unknown> }>,
+  agentId: string,
+  resolvedTexts: Set<string>
 ): WeightedLineCandidate[] {
   const itemCandidates = itemRows
     .filter(({ metadata }) => metadata.itemKind === "derived")
@@ -348,7 +427,20 @@ function buildDerivedCandidates(
 
   if (itemCandidates.length > 0) return itemCandidates;
 
-  return legacyRows.flatMap(({ entry, metadata }) => {
+  // ★ 修復：legacy fallback 中，有 derived 內容的 row（來自 combined-legacy），
+  // 如果 owner 是 "main"，則對 sub-agent 不可見，防止 context bleed。
+  // 純 legacy invariant（無 derived）不受影響，正常可見。
+  return legacyRows
+    .filter(({ metadata }) => {
+      const derived = metadata.derived;
+      const hasDerivedContent = Array.isArray(derived) && derived.length > 0;
+      if (!hasDerivedContent) return true;                                  // 無 derived → 正常 legacy invariant
+      const owner = typeof metadata.agentId === "string" ? metadata.agentId.trim() : "";
+      if (!owner) return false;                                             // 有 derived 但無 owner → 不可見
+      if (owner === "main") return false;                                  // ★ main 的 derived 不外流
+      return owner === agentId;                                             // 其他 agent 的 derived → 限本人
+    })
+    .flatMap(({ entry, metadata }) => {
     const timestamp = metadataTimestamp(metadata, entry.timestamp);
     const lines = sanitizeInjectableReflectionLines(toStringArray(metadata.derived));
     if (lines.length === 0) return [];
@@ -360,15 +452,18 @@ function buildDerivedCandidates(
       quality: computeDerivedLineQuality(lines.length),
     };
 
-    return lines.map((line) => ({
-      line,
-      timestamp,
-      midpointDays: readPositiveNumber(metadata.decayMidpointDays, defaults.midpointDays),
-      k: readPositiveNumber(metadata.decayK, defaults.k),
-      baseWeight: readPositiveNumber(metadata.deriveBaseWeight, defaults.baseWeight),
-      quality: readClampedNumber(metadata.deriveQuality, defaults.quality, 0.2, 1),
-      usedFallback: metadata.usedFallback === true,
-    }));
+    // Legacy fallback: filter out resolved lines (P2 fix).
+    return lines
+      .filter((line) => !resolvedTexts.has(normalizeReflectionLineForAggregation(line)))
+      .map((line) => ({
+        line,
+        timestamp,
+        midpointDays: readPositiveNumber(metadata.decayMidpointDays, defaults.midpointDays),
+        k: readPositiveNumber(metadata.decayK, defaults.k),
+        baseWeight: readPositiveNumber(metadata.deriveBaseWeight, defaults.baseWeight),
+        quality: readClampedNumber(metadata.deriveQuality, defaults.quality, 0.2, 1),
+        usedFallback: metadata.usedFallback === true,
+      }));
   });
 }
 
@@ -426,8 +521,35 @@ function isReflectionMetadataType(type: unknown): boolean {
   return type === "memory-reflection-item" || type === "memory-reflection";
 }
 
-function isOwnedByAgent(metadata: Record<string, unknown>, agentId: string): boolean {
+export function isOwnedByAgent(metadata: Record<string, unknown>, agentId: string): boolean {
   const owner = typeof metadata.agentId === "string" ? metadata.agentId.trim() : "";
+
+  const itemKind = metadata.itemKind;
+
+  // itemKind 只存在於 memory-reflection-item（derived | invariant）
+  // legacy (memory-reflection) 和 mapped (memory-reflection-mapped) 沒有 itemKind（為 undefined）
+  // 因此 undefined !== "derived"，會走 main fallback（維護相容性）
+
+  // 若是 derived 項目（memory-reflection-item）：不做 main fallback，
+  //   且 derived 不允許空白 owner（空白 owner 的 derived 應完全不可見，防止洩漏）
+  // itemKind 必須是 string type，否則會錯誤進入 derived 分支
+  //   （null/undefined/number 等非 string 值應走 legacy fallback）
+  // itemKind 如果是非 null/undefined 但也不是 "derived" 或 "invariant" 的值（malformed），
+  //   視為 data corruption，fail closed — 不接受任何 agent 讀取，防止繞過 ownership 檢查
+  if (typeof itemKind === "string") {
+    // 明確的 derived itemKind
+    if (itemKind === "derived") {
+      if (!owner) return false;
+      return owner === agentId;
+    }
+    // itemKind 是字串，但既不是 "derived" 也不是 "invariant"（malformed）→ fail closed
+    // invariant 走下面 legacy fallback 相容路徑（允許 main fallback）
+  } else if (itemKind !== undefined) {
+    // itemKind 存在但不是 string（null / number / object 等）→ fail closed
+    return false;
+  }
+
+  // Invariant / legacy / mapped / undefined itemKind：允許空的 owner 通行，維護舊的 main fallback
   if (!owner) return true;
   return owner === agentId || owner === "main";
 }

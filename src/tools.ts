@@ -9,8 +9,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryRetriever, RetrievalResult } from "./retriever.js";
-import type { MemoryStore } from "./store.js";
-import { isNoise } from "./noise-filter.js";
+import type { MemoryEntry, MemoryStore } from "./store.js";
+import { isNoise, ENVELOPE_NOISE_PATTERNS } from "./noise-filter.js";
+import { stripEnvelopeMetadata } from "./smart-extractor.js";
 import { isSystemBypassId, resolveScopeFilter, parseAgentIdFromSessionKey, type MemoryScopeManager } from "./scopes.js";
 import type { Embedder } from "./embedder.js";
 import {
@@ -174,9 +175,15 @@ async function retrieveWithRetry(
     scopeFilter?: string[];
     category?: string;
   },
+  countStore?: () => Promise<number>,
 ): Promise<RetrievalResult[]> {
   let results = await retriever.retrieve(params);
   if (results.length === 0) {
+    // Skip retry if store is empty — nothing to catch up via write-ahead lag.
+    if (countStore) {
+      const total = await countStore();
+      if (total === 0) return results;
+    }
     await sleep(75);
     results = await retriever.retrieve(params);
   }
@@ -209,7 +216,7 @@ async function resolveMemoryId(
     query: trimmed,
     limit: 5,
     scopeFilter,
-  });
+  }, () => context.store.count());
   if (results.length === 0) {
     return {
       ok: false,
@@ -574,7 +581,7 @@ export function registerMemoryRecallTool(
             scopeFilter,
             category,
             source: "manual",
-          }), runtimeContext.workspaceBoundary);
+          }, () => runtimeContext.store.count()), runtimeContext.workspaceBoundary);
 
           if (results.length === 0) {
             return {
@@ -697,6 +704,20 @@ export function registerMemoryStoreTool(
         };
 
         try {
+          // Guard: strip envelope metadata first, reject only if nothing remains (P2 fix)
+          const stripped = stripEnvelopeMetadata(text);
+          if (!stripped.trim()) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Skipped: text is purely envelope metadata with no extractable memory content.",
+                },
+              ],
+              details: { action: "envelope_metadata_rejected", text: text.slice(0, 60) },
+            };
+          }
+
           const agentId = runtimeContext.agentId;
           // Determine target scope
           let targetScope = scope;
@@ -768,12 +789,11 @@ export function registerMemoryStoreTool(
           }
 
           const safeImportance = clamp01(importance, 0.7);
-          const vector = await runtimeContext.embedder.embedPassage(text);
+          const vector = await runtimeContext.embedder.embedPassage(stripped);
 
           // Temporal awareness: classify and infer expiry
-          const temporalType = classifyTemporal(text);
-          const validUntil = inferExpiry(text);
-
+          const temporalType = classifyTemporal(stripped);
+          const validUntil = inferExpiry(stripped);
           // Check for duplicates / supersede candidates using raw vector similarity
           // (bypasses importance/recency weighting).
           // Fail-open by design: dedup must never block a legitimate memory write.
@@ -1065,7 +1085,7 @@ export function registerMemoryForgetTool(
               query,
               limit: 5,
               scopeFilter,
-            });
+            }, () => context.store.count());
 
             if (results.length === 0) {
               return {
@@ -1207,7 +1227,7 @@ export function registerMemoryUpdateTool(
               query: memoryId,
               limit: 3,
               scopeFilter,
-            });
+            }, () => context.store.count());
             if (results.length === 0) {
               return {
                 content: [
@@ -1260,14 +1280,20 @@ export function registerMemoryUpdateTool(
             newVector = await context.embedder.embedPassage(text);
           }
 
+          // Fetch existing entry once when we may need it (text change, or
+          // importance-only change that still needs metadata sync). Shared by
+          // the temporal supersede guard and the normal-path metadata rebuild.
+          let existing: MemoryEntry | null = null;
+          if (text || importance !== undefined) {
+            existing = await context.store.getById(resolvedId, scopeFilter);
+          }
+
           // --- Temporal supersede guard ---
           // For temporal-versioned categories (preferences/entities), changing
           // text must go through supersede to preserve the history chain.
-          if (text && newVector) {
-            const existing = await context.store.getById(resolvedId, scopeFilter);
-            if (existing) {
-              const meta = parseSmartMetadata(existing.metadata, existing);
-              if (TEMPORAL_VERSIONED_CATEGORIES.has(meta.memory_category)) {
+          if (text && newVector && existing) {
+            const meta = parseSmartMetadata(existing.metadata, existing);
+            if (TEMPORAL_VERSIONED_CATEGORIES.has(meta.memory_category)) {
                 const now = Date.now();
                 const factKey =
                   meta.fact_key ?? deriveFactKey(meta.memory_category, text);
@@ -1342,7 +1368,6 @@ export function registerMemoryUpdateTool(
                     category: meta.memory_category,
                   },
                 };
-              }
             }
           }
           // --- End temporal supersede guard ---
@@ -1353,6 +1378,34 @@ export function registerMemoryUpdateTool(
           if (importance !== undefined)
             updates.importance = clamp01(importance, 0.7);
           if (category) updates.category = category;
+
+          // Rebuild smart metadata when text or importance changes (#544)
+          if (text && existing) {
+            const meta = parseSmartMetadata(existing.metadata, existing);
+            const effectiveCategory = (category as any) ?? meta.memory_category;
+            const updatedMeta = buildSmartMetadata(existing, {
+              l0_abstract: text,
+              l1_overview: `- ${text}`,
+              l2_content: text,
+              fact_key: deriveFactKey(effectiveCategory, text),
+              memory_temporal_type: classifyTemporal(text),
+              confidence:
+                importance !== undefined
+                  ? clamp01(importance, 0.7)
+                  : meta.confidence,
+            });
+            // Re-derive valid_until from the new text. Explicit override
+            // (not via patch.valid_until) so the absence of a new expiry
+            // clears any stale value inherited from the previous text.
+            updatedMeta.valid_until = inferExpiry(text);
+            updates.metadata = stringifySmartMetadata(updatedMeta);
+          } else if (importance !== undefined && existing) {
+            // Sync confidence for importance-only changes
+            const updatedMeta = buildSmartMetadata(existing, {
+              confidence: clamp01(importance, 0.7),
+            });
+            updates.metadata = stringifySmartMetadata(updatedMeta);
+          }
 
           const updated = await context.store.update(
             resolvedId,
@@ -2128,7 +2181,7 @@ export function registerMemoryExplainRankTool(
             limit: safeLimit,
             scopeFilter,
             source: "manual",
-          });
+          }, () => runtimeContext.store.count());
           if (results.length === 0) {
             return {
               content: [{ type: "text", text: "No relevant memories found." }],
