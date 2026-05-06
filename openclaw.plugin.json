@@ -428,6 +428,7 @@
               "voyage",
               "pinecone",
               "dashscope",
+              "llamacpp",
               "tei"
             ],
             "default": "jina",
@@ -707,8 +708,8 @@
           "timeoutMs": {
             "type": "integer",
             "minimum": 1000,
-            "maximum": 120000,
-            "default": 20000
+            "maximum": 1200000,
+            "default": 900000
           },
           "thinkLevel": {
             "type": "string",
@@ -808,8 +809,8 @@
           },
           "timeoutMs": {
             "type": "integer",
-            "minimum": 500,
-            "default": 30000
+            "minimum": 1,
+            "default": 900000
           }
         }
       },
@@ -1444,7 +1445,7 @@
     },
     "llm.timeoutMs": {
       "label": "LLM Timeout (ms)",
-      "placeholder": "30000",
+      "placeholder": "900000",
       "help": "Request timeout for the smart-extraction / upgrade LLM in milliseconds",
       "advanced": true
     },
