@@ -1588,7 +1588,8 @@ const memoryLanceDBProPlugin = {
     // Parse and validate configuration
     const config = parsePluginConfig(api.pluginConfig);
 
-    const resolvedDbPath = api.resolvePath(config.dbPath || getDefaultDbPath());
+    const rawDbPath = config.dbPath || getDefaultDbPath();
+  const resolvedDbPath = api.resolvePath(rawDbPath) || rawDbPath;
 
     // Pre-flight: validate storage path (symlink resolution, mkdir, write check).
     // Runs synchronously and logs warnings; does NOT block gateway startup.
@@ -3505,6 +3506,9 @@ const memoryLanceDBProPlugin = {
 
     async function runBackup() {
       try {
+        if (!resolvedDbPath || typeof resolvedDbPath !== "string") {
+          return;
+        }
         const backupDir = api.resolvePath(
           join(resolvedDbPath, "..", "backups"),
         );
