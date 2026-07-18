@@ -1589,7 +1589,11 @@ const memoryLanceDBProPlugin = {
     const config = parsePluginConfig(api.pluginConfig);
 
     const rawDbPath = config.dbPath || getDefaultDbPath();
-  const resolvedDbPath = api.resolvePath(rawDbPath) || rawDbPath;
+  const resolvedDbPath = api.resolvePath(rawDbPath) || rawDbPath || "";
+  // Guard: ensure resolvedDbPath is always a valid string for all downstream code
+  if (!resolvedDbPath || typeof resolvedDbPath !== "string") {
+    throw new Error("memory-lancedb-pro: failed to resolve dbPath - check plugin config");
+  }
 
     // Pre-flight: validate storage path (symlink resolution, mkdir, write check).
     // Runs synchronously and logs warnings; does NOT block gateway startup.
@@ -3505,13 +3509,20 @@ const memoryLanceDBProPlugin = {
     const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
     async function runBackup() {
+      api.logger.info("memory-lancedb-pro: backup triggered");
       try {
         if (!resolvedDbPath || typeof resolvedDbPath !== "string") {
+          api.logger.warn("memory-lancedb-pro: backup SKIPPED - resolvedDbPath is invalid");
           return;
         }
+        api.logger.info("memory-lancedb-pro: backup - resolvedDbPath=" + resolvedDbPath);
         const backupDir = api.resolvePath(
           join(resolvedDbPath, "..", "backups"),
         );
+        if (!backupDir || typeof backupDir !== "string") {
+          api.logger.warn(`memory-lancedb-pro: backup SKIPPED - backupDir is invalid (api.resolvePath returned ${String(backupDir)})`);
+          return;
+        }
         await mkdir(backupDir, { recursive: true });
 
         const allMemories = await store.list(undefined, undefined, 10000, 0);
@@ -3550,6 +3561,9 @@ const memoryLanceDBProPlugin = {
         );
       } catch (err) {
         api.logger.warn(`memory-lancedb-pro: backup failed: ${String(err)}`);
+        if (err && typeof err === "object" && "stack" in err) {
+          api.logger.warn(`memory-lancedb-pro: backup stack: ${(err as Error).stack}`);
+        }
       }
     }
 
