@@ -3516,11 +3516,9 @@ const memoryLanceDBProPlugin = {
           return;
         }
         api.logger.info("memory-lancedb-pro: backup - resolvedDbPath=" + resolvedDbPath);
-        const backupDir = api.resolvePath(
-          join(resolvedDbPath, "..", "backups"),
-        );
+        const backupDir = join(resolvedDbPath, "..", "backups");
         if (!backupDir || typeof backupDir !== "string") {
-          api.logger.warn(`memory-lancedb-pro: backup SKIPPED - backupDir is invalid (api.resolvePath returned ${String(backupDir)})`);
+          api.logger.warn(`memory-lancedb-pro: backup SKIPPED - backupDir is invalid (value was ${String(backupDir)})`);
           return;
         }
         await mkdir(backupDir, { recursive: true });
