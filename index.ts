@@ -2041,6 +2041,24 @@ const memoryLanceDBProPlugin = {
       api.logger.debug?.("memory-lancedb-pro: register() called again — skipping re-init (idempotent)");
       return;
     }
+    // Parse and validate configuration (early dbPath guard: resolvePath may return undefined
+    // on some platforms — validate before Phase 2 singleton init).
+    const config = parsePluginConfig(api.pluginConfig);
+    const rawDbPath = config.dbPath || getDefaultDbPath();
+    const resolvedDbPath = api.resolvePath(rawDbPath) || rawDbPath || "";
+    if (!resolvedDbPath || typeof resolvedDbPath !== "string") {
+      throw new Error("memory-lancedb-pro: failed to resolve dbPath - check plugin config");
+    }
+    // Pre-flight: validate storage path (symlink resolution, mkdir, write check).
+    // Runs synchronously and logs warnings; does NOT block gateway startup.
+    try {
+      validateStoragePath(resolvedDbPath);
+    } catch (err) {
+      api.logger.warn(
+        `memory-lancedb-pro: storage path issue — ${String(err)}\n` +
+        `  The plugin will still attempt to start, but writes may fail.`,
+      );
+    }
 
     // Parse and validate configuration
     // ========================================================================
@@ -4211,10 +4229,18 @@ const memoryLanceDBProPlugin = {
     const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
     async function runBackup() {
+      api.logger.info("memory-lancedb-pro: backup triggered");
       try {
-        const backupDir = api.resolvePath(
-          join(resolvedDbPath, "..", "backups"),
-        );
+        if (!resolvedDbPath || typeof resolvedDbPath !== "string") {
+          api.logger.warn("memory-lancedb-pro: backup SKIPPED - resolvedDbPath is invalid");
+          return;
+        }
+        api.logger.info("memory-lancedb-pro: backup - resolvedDbPath=" + resolvedDbPath);
+        const backupDir = join(resolvedDbPath, "..", "backups");
+        if (!backupDir || typeof backupDir !== "string") {
+          api.logger.warn(`memory-lancedb-pro: backup SKIPPED - backupDir is invalid (value was ${String(backupDir)})`);
+          return;
+        }
         await mkdir(backupDir, { recursive: true });
 
         const allMemories = await store.list(undefined, undefined, 10000, 0);
@@ -4253,6 +4279,9 @@ const memoryLanceDBProPlugin = {
         );
       } catch (err) {
         api.logger.warn(`memory-lancedb-pro: backup failed: ${String(err)}`);
+        if (err && typeof err === "object" && "stack" in err) {
+          api.logger.warn(`memory-lancedb-pro: backup stack: ${(err as Error).stack}`);
+        }
       }
     }
 

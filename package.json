@@ -38,7 +38,7 @@
     "version": "node scripts/sync-plugin-version.mjs openclaw.plugin.json package.json && git add openclaw.plugin.json"
   },
   "dependencies": {
-    "@lancedb/lancedb": "^0.26.2",
+    "@lancedb/lancedb": "file:../../../prj/lancedb/nodejs",
     "@sinclair/typebox": "0.34.48",
     "apache-arrow": "18.1.0",
     "json5": "^2.2.3",

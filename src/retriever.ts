@@ -62,7 +62,6 @@ export interface RetrievalConfig {
     | "dashscope"
     | "tei"
     | "llamacpp";
-    | "tei";
   /** Rerank API timeout in milliseconds (default: 5000). Increase for local/CPU-based rerank servers. */
   rerankTimeoutMs?: number;
   /**
