@@ -1,4 +1,22 @@
 {
+  "contracts": {
+    "tools": [
+      "memory_recall",
+      "memory_store",
+      "memory_forget",
+      "memory_update",
+      "memory_stats",
+      "memory_debug",
+      "memory_list",
+      "memory_promote",
+      "memory_archive",
+      "memory_compact",
+      "memory_explain_rank",
+      "self_improvement_log",
+      "self_improvement_extract_skill",
+      "self_improvement_review"
+    ]
+  },
   "id": "memory-lancedb-pro",
   "name": "Memory (LanceDB Pro)",
   "description": "Enhanced LanceDB-backed long-term memory with hybrid retrieval, multi-scope isolation, long-context chunking, and management CLI",
@@ -128,7 +146,7 @@
       "autoRecallTimeoutMs": {
         "type": "integer",
         "minimum": 500,
-        "maximum": 60000,
+        "maximum": 1200000,
         "default": 5000,
         "description": "Timeout for the entire auto-recall pipeline (embedding + search + rerank) in milliseconds."
       },
@@ -417,7 +435,7 @@
           "rerankTimeoutMs": {
             "type": "integer",
             "minimum": 500,
-            "default": 5000,
+            "default": 12000,
             "description": "Rerank API timeout in milliseconds (default: 5000). Increase for local/CPU-based rerank servers."
           },
           "rerankProvider": {

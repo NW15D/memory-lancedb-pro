@@ -10,8 +10,10 @@ const SKIP_PATTERNS = [
   // Greetings & pleasantries (EN)
   /^(hi|hello|hey|good\s*(morning|afternoon|evening|night)|greetings|yo|sup|howdy|what'?s up)\b/i,
   // Greetings & pleasantries (RU)
-  /^(привет|здравствуй|приветствую|здорово|салют)\b/i,
-  /^добр(ое|ый|ую|ое)\s*(утро|день|вечер|ночи|ночь)\b/i,
+  // NOTE: JS \b is ASCII-only and never matches Cyrillic word boundaries,
+  // so use (?:^|\s) anchors for Russian words instead.
+  /^(?:привет|здравствуй|приветствую|здорово|салют)(?=\s|[.!?,]|$)/i,
+  /^(?:добр(?:ое|ый|ую|ого))\s*(?:утро|день|вечер|ночи|ночь)(?=\s|[.!?,]|$)/i,
   // System/bot commands
   /^\//,  // slash commands
   /^(run|build|test|ls|cd|git|npm|pip|docker|curl|cat|grep|find|make|sudo)\b/i,
@@ -37,19 +39,22 @@ const FORCE_RETRIEVE_PATTERNS = [
   // Memory-related keywords (EN)
   /\b(remember|recall|forgot|memory|memories)\b/i,
   // Memory-related keywords (RU)
-  /\b(запомни|вспомни|забыл|запамятовал|память|помнишь|помню)\b/i,
+  // NOTE: JS \b is ASCII-only and never matches Cyrillic word boundaries,
+  // so use (?:^|\s) lookarounds for Russian words instead.
+  /(?:^|\s)(запомни|вспомни|забыл|запамятовал|память|помнишь|помню|помнишь\s+ли)(?:\s|[.!?,]|$)/i,
+  /прошлой\s+сессии|прошлая\s+сессия|прошлую\s+сессию/i,
   // Temporal references (EN)
   /\b(last time|before|previously|earlier|yesterday|ago)\b/i,
   // Temporal references (RU)
-  /\b(раньше|прежде|прошлый раз|до этого|недавно|давно|вчера|позавчера)\b/i,
+  /(?:^|\s)(раньше|прежде|прошлый\s+раз|до\s+этого|недавно|давно|вчера|позавчера)(?:\s|[.!?,]|$)/i,
   // Personal data queries (EN)
   /\b(my (name|email|phone|address|birthday|preference))\b/i,
   // Personal data queries (RU)
-  /\bмо(я|ё|й|и|е)\s*(имя|почта|телефон|адрес|день рождения|дата рождения|никнейм|логин)\b/i,
+  /(?:(?:^|\s)мо(?:я|ё|й|и|е)|^мо(?:я|ё|й|и|е))\s*(имя|почта|телефон|адрес|день\s+рождения|дата\s+рождения|никнейм|логин)(?:\s|[.!?,]|$)/i,
   // "What did I say/tell" patterns (EN)
   /\b(what did (i|we)|did i (tell|say|mention))\b/i,
   // "What did I say/tell" patterns (RU)
-  /\b(что я (говорил|сказал|писал|упоминал)|о ч(ё|е)м мы говорили|что мы обсуждали)\b/i,
+  /(?:^|[\s,..])(?:что\s+я\s+(?:говорил|сказал|писал|упоминал)|о\s+ч(?:ё|е)м\s+мы\s+говорили|что\s+мы\s+обсуждали)(?:\s|[.!?,]|$)|^помнишь\s+ли\s+ты/i,
   // CJK patterns
   /(你记得|[你妳]記得|之前|上次|以前|还记得|還記得|提到过|提到過|说过|說過)/i,
 ];

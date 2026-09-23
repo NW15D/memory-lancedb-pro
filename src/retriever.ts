@@ -61,7 +61,8 @@ export interface RetrievalConfig {
     | "pinecone"
     | "dashscope"
     | "tei"
-    | "llamacpp";
+    | "llamacpp"
+    | "tei";
   /** Rerank API timeout in milliseconds (default: 5000). Increase for local/CPU-based rerank servers. */
   rerankTimeoutMs?: number;
   /**
@@ -571,7 +572,11 @@ export class MemoryRetriever {
     private embedder: Embedder,
     private config: RetrievalConfig = DEFAULT_RETRIEVAL_CONFIG,
     private decayEngine: DecayEngine | null = null,
-  ) { }
+    tierManager: TierManager | null = null,
+  ) {
+    // Field `tierManager` is declared at class level; assign here.
+    this.tierManager = tierManager;
+  }
 
   setAccessTracker(tracker: AccessTracker): void {
     this.accessTracker = tracker;
@@ -674,6 +679,12 @@ export class MemoryRetriever {
       // Record access for reinforcement (manual recall only)
       if (this.accessTracker && source === "manual" && results.length > 0) {
         this.accessTracker.recordAccess(results.map((r) => r.entry.id));
+      }
+
+      // Tier promotion/demotion lifecycle (bounded top-3, fire-and-forget:
+      // must never block or delay the retrieval response)
+      if (results.length > 0 && (this.decayEngine || this.tierManager)) {
+        void this.recordAccessAndMaybeTransition(results);
       }
 
       return results;
@@ -1732,12 +1743,23 @@ export interface RetrieverLifecycleOptions {
   tierManager?: TierManager;
 }
 
+export interface RetrieverFactoryOptions {
+  decayEngine?: DecayEngine | null;
+  tierManager?: TierManager | null;
+}
+
 export function createRetriever(
   store: MemoryStore,
   embedder: Embedder,
   config?: Partial<RetrievalConfig>,
-  options?: { decayEngine?: DecayEngine | null },
+  options?: RetrieverFactoryOptions,
 ): MemoryRetriever {
   const fullConfig = { ...DEFAULT_RETRIEVAL_CONFIG, ...config };
-  return new MemoryRetriever(store, embedder, fullConfig, options?.decayEngine ?? null);
+  return new MemoryRetriever(
+    store,
+    embedder,
+    fullConfig,
+    options?.decayEngine ?? null,
+    options?.tierManager ?? null,
+  );
 }

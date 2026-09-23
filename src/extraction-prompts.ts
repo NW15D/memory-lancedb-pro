@@ -14,7 +14,7 @@ export function buildExtractionPrompt(
 
 User: ${user}
 
-Target Output Language: auto (detect from recent messages)
+Target Output Language: auto (detect from recent messages). For Russian conversations output Russian. Для русскоязычных сессий содержимое памяти должно быть на русском языке.
 
 ## Recent Conversation
 ${conversationText}
@@ -25,6 +25,7 @@ ${conversationText}
 - Personalized information: Information specific to this user, not general domain knowledge
 - Long-term validity: Information that will still be useful in future sessions
 - Specific and clear: Has concrete details, not vague generalizations
+- Russian value signals (phrasings worth memorizing): «мой проект …», «работаем с …», «у меня есть …», «есть тут …» (profile); «я выбираю …», «нравится / не нравится …», «это ок / не ок …», «делаем / не делаем …» (preferences); «мой коллега / друг / клиент …», «мы работаем с компанией …», «X — это наш …», «мой email / телефон: …» (entities); «мы договорились …», «мы решаем / выбираем …», «я запустил / настроил / задеплоил …», «я закончил …» (events); «проблема была … и решил …», «не работало X, помогло Y», «ошибка была в том, что …» (cases); «делаем так: …», «правило такое: …», «схема: сначала …, затем …» (patterns)
 
 ## What is NOT worth remembering?
 - General knowledge that anyone would know
@@ -34,6 +35,7 @@ ${conversationText}
 - Tool output, error logs, or boilerplate
 - Runtime scaffolding or orchestration wrappers such as "[Subagent Context]", "[Subagent Task]", bootstrap wrappers, task envelopes, or agent instructions — these are execution metadata, NEVER store them as memories
 - Recall queries / meta-questions: "Do you remember X?", "你还记得X吗?", "你知道我喜欢什么吗" — these are retrieval requests, NOT new information to store
+- Russian recall queries: «Помнишь …?», «Ты помнишь …?», «Мы обсуждали …?», «Вспомни …», «Что я говорил про …?», «… из прошлой сессии» — retrieval requests, NOT new information to store. Never save them as memories
 - Degraded or incomplete references: If the user mentions something vaguely ("that thing I said"), do NOT invent details or create a hollow memory
 
 # Memory Classification
@@ -51,12 +53,12 @@ ${conversationText}
 
 ## Precise Definition
 
-**profile** - User identity (static attributes). Test: "User is..."
-**preferences** - User preferences (tendencies). Test: "User prefers/likes..."
-**entities** - Continuously existing nouns. Test: "XXX's state is..."
-**events** - Things that happened. Test: "XXX did/completed..."
-**cases** - Problem + solution pairs. Test: Contains "problem -> solution"
-**patterns** - Reusable processes. Test: Can be used in "similar situations"
+**profile** - User identity (static attributes). Test: "User is..." / RU: «Пользователь — кто он?», «мой проект …», «работаем с …», «у меня есть …»
+**preferences** - User preferences (tendencies). Test: "User prefers/likes..." / RU: «я выбираю …», «нравится / не нравится …», «это ок / не ок …», «делаем / не делаем …»
+**entities** - Continuously existing nouns. Test: "XXX's state is..." / RU: «мой коллега / друг / клиент …», «мы работаем с компанией …», «X — это наш …», «мой email / телефон: …»
+**events** - Things that happened. Test: "XXX did/completed..." / RU: «мы договорились …», «мы решаем / выбираем …», «я запустил / настроил / задеплоил …», «я закончил …»
+**cases** - Problem + solution pairs. Test: Contains "problem -> solution" / RU: «проблема была … и решил …», «не работало X, помогло Y», «ошибка была в том, что …»
+**patterns** - Reusable processes. Test: Can be used in "similar situations" / RU: «делаем так: …», «правило такое: …», «схема: сначала …, затем …»
 
 ## Common Confusion
 - "Plan to do X" -> events (action, not entity)
@@ -64,6 +66,11 @@ ${conversationText}
 - "User prefers X" -> preferences (not profile)
 - "Encountered problem A, used solution B" -> cases (not events)
 - "General process for handling certain problems" -> patterns (not cases)
+- «План сделать X» -> events (действие, а не сущность)
+- «Статус проекта X: Y» -> entities (описывает сущность)
+- «Пользователь предпочитает X» -> preferences (не profile)
+- «Столкнулся с проблемой A, решил через B» -> cases (не events)
+- «Общий процесс для типовых задач» -> patterns (не cases)
 
 # Three-Level Structure
 
@@ -83,9 +90,9 @@ Each memory contains three levels:
 \`\`\`json
 {
   "category": "profile",
-  "abstract": "User basic info: AI development engineer, 3 years LLM experience",
-  "overview": "## Background\\n- Occupation: AI development engineer\\n- Experience: 3 years LLM development\\n- Tech stack: Python, LangChain",
-  "content": "User is an AI development engineer with 3 years of LLM application development experience."
+  "abstract": "Базовое: инженер ИИ, 3 года опыта с LLM",
+  "overview": "## Контекст\\n- Должность: инженер ИИ\\n- Опыт: 3 года разработки LLM\\n- Стек: Python, LangChain",
+  "content": "Пользователь — инженер ИИ с 3 годами опыта разработки LLM-приложений."
 }
 \`\`\`
 
@@ -93,9 +100,9 @@ Each memory contains three levels:
 \`\`\`json
 {
   "category": "preferences",
-  "abstract": "Python code style: No type hints, concise and direct",
-  "overview": "## Preference Domain\\n- Language: Python\\n- Topic: Code style\\n\\n## Details\\n- No type hints\\n- Concise function comments\\n- Direct implementation",
-  "content": "User prefers Python code without type hints, with concise function comments."
+  "abstract": "Стиль кода Python: без аннотаций типов, лаконично",
+  "overview": "## Область предпочтения\\n- Язык: Python\\n- Тема: стиль кода\\n\\n## Детали\\n- Без аннотаций типов\\n- Краткие комментарии к функциям\\n- Прямая реализация",
+  "content": "Пользователь предпочитает писать на Python без аннотаций типов, с краткими комментариями."
 }
 \`\`\`
 
@@ -103,9 +110,9 @@ Each memory contains three levels:
 \`\`\`json
 {
   "category": "cases",
-  "abstract": "LanceDB BigInt numeric handling issue",
-  "overview": "## Problem\\nLanceDB 0.26+ returns BigInt for numeric columns\\n\\n## Solution\\nCoerce values with Number(...) before arithmetic",
-  "content": "When LanceDB returns BigInt values, wrap them with Number() before doing arithmetic operations."
+  "abstract": "Проблема: BigInt в числовых колонках LanceDB",
+  "overview": "## Проблема\\nLanceDB 0.26+ возвращает BigInt для числовых колонок\\n\\n## Решение\\nПриводить значения через Number(...) перед арифметикой",
+  "content": "Когда LanceDB возвращает BigInt, нужно оборачивать значения в Number() перед арифметическими операциями."
 }
 \`\`\`
 
@@ -124,7 +131,7 @@ Return JSON:
 }
 
 Notes:
-- Output language should match the dominant language in the conversation
+- Output language should match the dominant language in the conversation. For Russian conversations write abstract/overview/content in Russian (для русскоязычных сессий пиши содержимое на русском)
 - Only extract truly valuable personalized information
 - If nothing worth recording, return {"memories": []}
 - Maximum 5 memories per extraction
@@ -158,7 +165,7 @@ Please decide:
 
 IMPORTANT:
 - "events" and "cases" categories are independent records — they do NOT support MERGE/SUPERSEDE/SUPPORT/CONTEXTUALIZE/CONTRADICT. For these categories, only use SKIP or CREATE.
-- If the candidate appears to be derived from a recall question (e.g., "Do you remember X?" / "你记得X吗？") and an existing memory already covers topic X with equal or more detail, you MUST choose SKIP.
+- If the candidate appears to be derived from a recall question (e.g., "Do you remember X?" / "你记得X吗？" / «Помнишь X?» / «Ты помнишь X?» / «Мы обсуждали X?») and an existing memory already covers topic X with equal or more detail, you MUST choose SKIP.
 - A candidate with less information than an existing memory on the same topic should NEVER be CREATED or MERGED — always SKIP.
 - For "preferences" and "entities", use SUPERSEDE when the candidate replaces the current truth instead of adding detail or context. Example: existing "Preferred editor: VS Code", candidate "Preferred editor: Zed".
 - For SUPPORT/CONTEXTUALIZE/CONTRADICT, you MUST provide a context_label from this vocabulary: general, morning, evening, night, weekday, weekend, work, leisure, summer, winter, travel.
